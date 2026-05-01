@@ -1,0 +1,93 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} { allow read, write: if false; }
+
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null && request.auth.uid != null; }
+
+    // User document validation
+    function isValidUser(data) {
+      // NOTE: We don't enforce data.keys().size() == 2 initially for strict adherence in simple apps, 
+      // but let's do it for security.
+      return data.keys().hasAll(['createdAt', 'updatedAt']) && 
+             data.keys().size() == 2 &&
+             data.createdAt == request.time &&
+             data.updatedAt == request.time;
+    }
+
+    function isValidUserUpdate(data) {
+      return data.keys().hasAll(['createdAt', 'updatedAt']) && 
+             data.keys().size() == 2 &&
+             data.createdAt is timestamp &&
+             data.updatedAt == request.time;
+    }
+
+    function getCardKeysSize(data) {
+      return 2 + 
+             ('rewardRate' in data ? 1 : 0) + 
+             ('annualFee' in data ? 1 : 0) + 
+             ('foreignTransactionFee' in data ? 1 : 0) + 
+             ('benefits' in data ? 1 : 0);
+    }
+
+    // Card document validation
+    function isValidCard(data) {
+      let isRewardRateValid = !('rewardRate' in data) || (data.rewardRate is string && data.rewardRate.size() <= 100);
+      let isAnnualFeeValid = !('annualFee' in data) || (data.annualFee is string && data.annualFee.size() <= 50);
+      let isFTFValid = !('foreignTransactionFee' in data) || (data.foreignTransactionFee is string && data.foreignTransactionFee.size() <= 50);
+      let isBenefitsValid = !('benefits' in data) || (data.benefits is string && data.benefits.size() <= 500);
+
+      return data.keys().hasAll(['name', 'addedAt']) && 
+             data.keys().size() == getCardKeysSize(data) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             isRewardRateValid && isAnnualFeeValid && isFTFValid && isBenefitsValid &&
+             data.addedAt == request.time;
+    }
+
+    function isValidCardUpdate(data) {
+      let isRewardRateValid = !('rewardRate' in data) || (data.rewardRate is string && data.rewardRate.size() <= 100);
+      let isAnnualFeeValid = !('annualFee' in data) || (data.annualFee is string && data.annualFee.size() <= 50);
+      let isFTFValid = !('foreignTransactionFee' in data) || (data.foreignTransactionFee is string && data.foreignTransactionFee.size() <= 50);
+      let isBenefitsValid = !('benefits' in data) || (data.benefits is string && data.benefits.size() <= 500);
+
+      return data.keys().hasAll(['name', 'addedAt']) && 
+             data.keys().size() == getCardKeysSize(data) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             isRewardRateValid && isAnnualFeeValid && isFTFValid && isBenefitsValid &&
+             data.addedAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && 
+                    request.auth.uid == userId && 
+                    isValidId(userId) &&
+                    isValidUser(incoming());
+      allow update: if isSignedIn() && 
+                    request.auth.uid == userId && 
+                    isValidUserUpdate(incoming()) &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['updatedAt']) &&
+                    incoming().createdAt == existing().createdAt;
+    }
+
+    match /users/{userId}/cards/{cardId} {
+      allow read, list: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && 
+                    request.auth.uid == userId && 
+                    isValidId(cardId) &&
+                    isValidCard(incoming()) &&
+                    exists(/databases/$(database)/documents/users/$(userId));
+      allow update: if isSignedIn() && 
+                    request.auth.uid == userId && 
+                    isValidCardUpdate(incoming()) &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['name', 'rewardRate', 'annualFee', 'foreignTransactionFee', 'benefits']) &&
+                    incoming().addedAt == existing().addedAt;
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+  }
+}

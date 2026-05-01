@@ -1,0 +1,6 @@
+{
+  "name": "CardMaximizer",
+  "description": "Find the best credit card from your wallet for any spending category.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

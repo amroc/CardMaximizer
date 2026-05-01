@@ -1,0 +1,38 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile data",
+      "type": "object",
+      "properties": {
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["createdAt", "updatedAt"]
+    },
+    "Card": {
+      "title": "Credit Card",
+      "description": "A credit card in a user's wallet",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100 },
+        "addedAt": { "type": "string" },
+        "rewardRate": { "type": "string", "maxLength": 100, "description": "Optional reward rate or notes" },
+        "annualFee": { "type": "string", "maxLength": 50, "description": "Optional annual fee" },
+        "foreignTransactionFee": { "type": "string", "maxLength": 50, "description": "Optional foreign transaction fee" },
+        "benefits": { "type": "string", "maxLength": 500, "description": "Optional benefits" }
+      },
+      "required": ["name", "addedAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "User" },
+      "description": "User profile data."
+    },
+    "users/{userId}/cards/{cardId}": {
+      "schema": { "$ref": "Card" },
+      "description": "Credit cards owned by the user."
+    }
+  }
+}
