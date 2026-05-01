@@ -172,7 +172,7 @@ export default function App() {
       }
     });
     return () => unsubscribe();
-  }, []);
+  }, [isOfflineMode]);
 
   useEffect(() => {
     if (isOfflineMode) {
@@ -274,21 +274,27 @@ export default function App() {
         if (newBenefits.trim()) cardData.benefits = newBenefits.trim();
         
         let fetchedImageUrl = newImageUrl.trim();
-        if (!fetchedImageUrl) {
+        if (!fetchedImageUrl && !isOfflineMode && navigator.onLine) {
           const fetchImageFromGemini = async (isRetry = false) => {
             try {
               const prompt = isRetry
                 ? `The first image URL search for the "${cardName}" credit card failed. Please try again. Return ONLY the raw valid URL string of the image (.png, .jpg, etc). Must start with http or https. No quotes or formatting.`
                 : `Find a publicly accessible high-quality image URL of the "${cardName}" credit card. Return ONLY the raw valid URL string. Do not include any markdown formatting, explanation, or quotes. If you cannot find one reliably, return exactly the word "null".`;
 
-              const imageResponse = await ai.models.generateContent({
-                model: 'gemini-3.1-pro-preview',
+              const generatePromise = ai.models.generateContent({
+                model: 'gemini-2.5-flash',
                 contents: prompt,
                 config: {
                   temperature: isRetry ? 0.3 : 0,
                   tools: [{ googleSearch: {} }],
                 }
               });
+
+              const timeoutPromise = new Promise<{text?: string}>((_, reject) => {
+                setTimeout(() => reject(new Error('Timeout after 8 seconds')), 8000);
+              });
+
+              const imageResponse = await Promise.race([generatePromise, timeoutPromise]) as {text?: string};
               
               const urlText = (imageResponse.text || '').trim();
               if (urlText && urlText !== 'null') {
@@ -329,6 +335,8 @@ export default function App() {
             });
             // Will remain empty and use default placeholder.
           }
+        } else if (!fetchedImageUrl && (isOfflineMode || !navigator.onLine)) {
+             console.log(`Skipping Gemini image fetch for ${cardName} due to offline mode.`);
         }
         
         if (fetchedImageUrl) cardData.imageUrl = fetchedImageUrl;
@@ -340,6 +348,10 @@ export default function App() {
           await setDoc(newCardRef, cardData);
         }
       }));
+
+      if (isOfflineMode) {
+        saveOfflineCards(newOfflineCards);
+      }
 
       setNewCard('');
       setNewRewardRate('');
@@ -496,18 +508,34 @@ When evaluating the best card, please carefully consider:
 Please state the best card clearly, its expected effective reward rate (as a %), and provide a brief step-by-step mathematical explanation of your calculation explicitly showing the point valuation used. Keep the response concise and formatted with markdown.`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.1-pro-preview',
+        model: 'gemini-2.5-flash',
         contents: prompt,
         config: {
-          tools: [{ googleSearch: {} }],
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
+          tools: [{ googleSearch: {} }]
         }
       });
 
       setRecommendation(response.text || 'Could not determine the best card.');
-    } catch (error) {
-      console.error(error);
-      setRecommendation('An error occurred while evaluating your cards. Please try again.');
+    } catch (error: any) {
+      console.error('Error from Gemini API:', error);
+      let isQuota = false;
+      let errMsg = String(error);
+      
+      if (error?.status === 429 || error?.message?.includes('429') || error?.message?.includes('spend cap')) {
+        isQuota = true;
+      } else if (error?.error?.code === 429 || error?.error?.message?.includes('spend cap')) {
+        isQuota = true;
+      } else if (error instanceof Error) {
+        errMsg = error.message;
+      } else if (typeof error === 'object' && error !== null) {
+        errMsg = JSON.stringify(error);
+        if (errMsg.includes('429') || errMsg.includes('spend cap')) {
+          isQuota = true;
+        }
+      }
+
+      const msg = isQuota ? 'You have exceeded your monthly spending cap for the Gemini API. Please go to AI Studio at https://ai.studio/spend to manage your project spend cap.' : errMsg;
+      setRecommendation(`An error occurred: ${msg}\n\nPlease try again.`);
     } finally {
       setIsLoading(false);
     }
@@ -551,18 +579,34 @@ When evaluating alternatives, consider complex reward structures (tiered rates, 
 State the alternative cards clearly, their expected effective reward rate (as a %), explain your calculation explicitly showing the point valuation used, and why they are good backups. Keep the response concise and formatted with markdown.`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.1-pro-preview',
+        model: 'gemini-2.5-flash',
         contents: prompt,
         config: {
-          tools: [{ googleSearch: {} }],
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
+          tools: [{ googleSearch: {} }]
         }
       });
 
       setRecommendation((prev) => prev + '\n\n---\n\n### Alternative Suggestions\n\n' + (response.text || 'Could not determine alternative cards.'));
-    } catch (error) {
-      console.error(error);
-      setRecommendation((prev) => prev + '\n\n---\n\nAn error occurred while finding alternatives. Please try again.');
+    } catch (error: any) {
+      console.error('Error from Gemini API:', error);
+      let isQuota = false;
+      let errMsg = String(error);
+      
+      if (error?.status === 429 || error?.message?.includes('429') || error?.message?.includes('spend cap')) {
+        isQuota = true;
+      } else if (error?.error?.code === 429 || error?.error?.message?.includes('spend cap')) {
+        isQuota = true;
+      } else if (error instanceof Error) {
+        errMsg = error.message;
+      } else if (typeof error === 'object' && error !== null) {
+        errMsg = JSON.stringify(error);
+        if (errMsg.includes('429') || errMsg.includes('spend cap')) {
+          isQuota = true;
+        }
+      }
+
+      const msg = isQuota ? 'You have exceeded your monthly spending cap for the Gemini API. Please go to AI Studio at https://ai.studio/spend to manage your project spend cap.' : errMsg;
+      setRecommendation((prev) => prev + `\n\n---\n\nAn error occurred while finding alternatives: ${msg}\n\nPlease try again.`);
     } finally {
       setIsAltLoading(false);
     }
@@ -583,7 +627,7 @@ State the alternative cards clearly, their expected effective reward rate (as a 
           <div className="bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-400 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-sm">
             <WalletCards className="w-8 h-8" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-zinc-50 mb-2">CardMaximizer</h1>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-zinc-50 mb-2">Card Maximiser</h1>
           <p className="text-slate-500 dark:text-zinc-400 mb-8">Sign in to securely manage your connected cards, or use the app offline.</p>
           <div className="flex flex-col gap-4">
             <button
@@ -619,7 +663,7 @@ State the alternative cards clearly, their expected effective reward rate (as a 
               <div className="bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-400 p-1.5 rounded-lg shadow-sm">
                 <WalletCards className="w-5 h-5" />
               </div>
-              <div className="font-extrabold text-[20px] text-slate-900 dark:text-zinc-50 tracking-tight tracking-tight">CardMaximizer</div>
+              <div className="font-extrabold text-[20px] text-slate-900 dark:text-zinc-50 tracking-tight tracking-tight">Card Maximiser</div>
               {isOfflineMode && <span className="ml-1 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 rounded-full">Offline</span>}
             </div>
             <p className="text-[12px] text-slate-500 dark:text-zinc-400 mt-1 hidden md:block">Manage {cards.length} Connected Cards</p>
@@ -977,7 +1021,7 @@ State the alternative cards clearly, their expected effective reward rate (as a 
             )}
 
             <div className="flex flex-wrap gap-2 mt-2">
-              {['Fuel', 'Dining', 'Flight Booking', 'Hotel Booking', 'Lounge Access', 'Wallet Load', 'Travel', 'Groceries', 'Movies', 'Bills'].map(cat => (
+              {['Fuel', 'Dining', 'Flight Booking', 'Hotel Booking', 'Lounge Access', 'Wallet Load', 'Travel', 'Groceries', 'Movies', 'Bills', 'International Transaction'].map(cat => (
                  <button 
                    key={cat}
                    type="button"
